@@ -1,0 +1,16 @@
+name: kemal-session-postgres
+version: 0.1.0
+
+authors:
+  - Maggie Soltani <hej@maggiesoltani.se>
+
+dependencies:
+  pg:
+    github: will/crystal-pg
+  kemal-session:
+    github: mang/kemal-session
+    commit: 6433f515150ce66174e2d6d42067a7f67fc7722f
+
+crystal: 0.33.0
+
+license: MIT
