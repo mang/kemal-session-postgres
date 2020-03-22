@@ -179,7 +179,7 @@ module Kemal
       def load_into_cache(id)
         json = ""
 
-        @db_conn.query_one(
+        @db_conn.query_all(
           %{
             SELECT DATA
             FROM #{@sessions_table}
