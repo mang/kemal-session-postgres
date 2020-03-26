@@ -8,8 +8,12 @@ dependencies:
   pg:
     github: will/crystal-pg
   kemal-session:
-    github: mang/kemal-session
-    commit: 6433f515150ce66174e2d6d42067a7f67fc7722f
+    github: kemalcr/kemal-session
+    branch: master
+  kemal:
+    github: kemalcr/kemal
+  spec-kemal:
+    github: kemalcr/spec-kemal
 
 crystal: 0.33.0
 

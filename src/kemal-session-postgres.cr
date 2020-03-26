@@ -65,9 +65,11 @@ module Kemal
       property cache = {} of String => StorageInstance,
         cache_times = {} of String => Time,
         db_conn : DB::Database,
-        cache_ttl : Time::Span
+        cache_ttl : Time::Span,
+        propagate_strategy : Symbol,
+        engine_id = Random::Secure.hex(16)
 
-      def initialize(@db_conn : DB::Database, @sessions_table = "kemal_sessions", @cache_ttl = 60.seconds)
+      def initialize(@db_conn : DB::Database, @sessions_table = "kemal_sessions", @cache_ttl = 60.seconds, @propagate_strategy = :invalidate)
         @db_conn.exec(
           %{
             CREATE TABLE IF NOT EXISTS #{@sessions_table} (
@@ -77,13 +79,29 @@ module Kemal
             )
           }
         )
+
+        PG.connect_listen(@db_conn.uri, "kemal_session_update", "kemal_session_delete") do |notification|
+          id, engine_id = notification.payload.split(',')
+
+          # if updating, don't run on the same engine instance
+          unless engine_id == @engine_id && notification.channel == "kemal_session_update"
+            if @propagate_strategy == :invalidate || notification.channel == "kemal_session_delete"
+              @cache.delete(id)
+              @cache_times.delete(id)
+            elsif @propagate_strategy == :update && notification.channel == "kemal_session_update"
+              load_into_cache(id, broadcast: false)
+            else
+              raise "Unknown propagate_strategy, please use either :invalidate or :update"
+            end
+          end
+        end
       end
 
       def run_gc
         @db_conn.exec(
           %{
               DELETE FROM #{@sessions_table}
-              WHERE date_updated < $2
+              WHERE date_updated < $1
             }, Time.utc - Kemal::Session.config.timeout
         )
         @cache.each do |id, session|
@@ -115,16 +133,15 @@ module Kemal
       def each_session
         @db_conn.query_all(
           %{
-              SELECT data
+              SELECT session_id
               FROM #{@sessions_table}
             }) do |result|
-          json = result.read(String)
-          yield StorageInstance.from_json(json)
+          yield Session.new(result.read(String))
         end
       end
 
-      def all_sessions : Array(Kemal::Session)
-        sessions = [] of StorageInstance
+      def all_sessions : Array(Session)
+        sessions = [] of Session
         each_session { |session| sessions << session }
         return sessions
       end
@@ -153,6 +170,7 @@ module Kemal
               WHERE session_id = $1
             }, id
         )
+        @db_conn.exec(%{SELECT pg_notify($1, $2)}, "kemal_session_delete", [id, @engine_id].join(','))
       end
 
       def destroy_all_sessions
@@ -161,6 +179,8 @@ module Kemal
               TRUNCATE TABLE #{@sessions_table}
             }
         )
+        @cache = {} of String => StorageInstance
+        @cache_times = {} of String => Time
       end
 
       def save_cache(id)
@@ -174,9 +194,11 @@ module Kemal
             WHERE session_id = $3
           }, data, Time.utc, id
         )
+
+        @db_conn.exec(%{SELECT pg_notify($1, $2)}, "kemal_session_update", [id, @engine_id].join(','))
       end
 
-      def load_into_cache(id)
+      def load_into_cache(id, broadcast = true)
         json = ""
 
         @db_conn.query_all(
@@ -195,15 +217,21 @@ module Kemal
           @cache[id] = StorageInstance.from_json(json)
         end
 
-        @cache_times[id] = Time.utc
+        time = Time.utc
+
+        @cache_times[id] = time
 
         @db_conn.exec(
           %{
             UPDATE #{@sessions_table}
             SET date_updated = $1
             WHERE session_id = $2
-          }, Time.utc, id
+          }, time, id
         )
+
+        if broadcast
+          @db_conn.exec(%{SELECT pg_notify($1, $2)}, "kemal_session_update", [id, @engine_id].join(','))
+        end
 
         @cache[id]
       end
