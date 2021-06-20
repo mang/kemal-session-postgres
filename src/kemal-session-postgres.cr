@@ -1,6 +1,6 @@
 require "db"
 require "pg"
-require "json"
+require "json_mapping"
 require "kemal-session"
 
 module Kemal::Session::Postgres
